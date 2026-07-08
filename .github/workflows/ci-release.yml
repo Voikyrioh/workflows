@@ -1,0 +1,98 @@
+name: CI Release (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: "Nom de l'image Docker sur GHCR (ex: my-chess-game)"
+        required: true
+        type: string
+      bump_type:
+        description: "Type de bump sémantique (patch/minor/major)"
+        required: true
+        type: string
+      build_args:
+        description: "Build args Docker additionnels (multi-lignes KEY=VALUE), ex. VITE_API_URL=… pour les fronts buildés"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Normaliser le owner (lowercase)
+        id: owner
+        run: echo "value=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Calculer le nouveau tag
+        id: version
+        run: |
+          LATEST=$(git tag --sort=-version:refname | head -1)
+          [ -z "$LATEST" ] && LATEST="v0.0.0"
+          MAJOR=$(echo "$LATEST" | cut -d. -f1 | tr -d 'v')
+          MINOR=$(echo "$LATEST" | cut -d. -f2)
+          PATCH=$(echo "$LATEST" | cut -d. -f3)
+
+          case "${{ inputs.bump_type }}" in
+            major) NEW="v$((MAJOR+1)).0.0" ;;
+            minor) NEW="v${MAJOR}.$((MINOR+1)).0" ;;
+            patch) NEW="v${MAJOR}.${MINOR}.$((PATCH+1))" ;;
+            *) echo "ERROR: bump_type invalide" >&2; exit 1 ;;
+          esac
+
+          if git ls-remote --tags origin "$NEW" | grep -q "$NEW"; then
+            echo "ERROR: Le tag $NEW existe déjà. Utilise un bump plus élevé ou supprime le tag manuellement." >&2
+            exit 1
+          fi
+
+          echo "tag=$NEW" >> $GITHUB_OUTPUT
+          echo "Nouveau tag : $NEW (depuis $LATEST)"
+
+      - name: Login GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build et push image
+        uses: docker/build-push-action@v6
+        env:
+          NEW_TAG: ${{ steps.version.outputs.tag }}
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.value }}/${{ inputs.app_name }}:${{ steps.version.outputs.tag }}
+            ghcr.io/${{ steps.owner.outputs.value }}/${{ inputs.app_name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GITHUB_TOKEN=${{ secrets.NPM_TOKEN || secrets.GITHUB_TOKEN }}
+            ${{ inputs.build_args }}
+
+      - name: Créer le tag git et la release GitHub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
+          gh release create "$NEW_TAG" \
+            --title "$NEW_TAG" \
+            --generate-notes

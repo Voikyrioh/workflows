@@ -1,0 +1,133 @@
+name: Deploy App (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: "Nom de l'app (= nom du dossier dans /opt/infra/apps/)"
+        required: true
+        type: string
+      image_name:
+        description: "Nom de l'image Docker sur GHCR"
+        required: true
+        type: string
+    secrets:
+      # Noms alignés sur ceux posés par provision-app.yml sur les repos apps
+      SSH_HOST:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+      SSH_PORT:
+        required: true
+      VAULT_ADDR:
+        required: true
+      VAULT_ROLE_ID:
+        required: true
+      VAULT_SECRET_ID:
+        required: true
+      GHCR_TOKEN:
+        required: true
+      NPM_TOKEN:
+        required: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ inputs.image_name }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            GITHUB_TOKEN=${{ secrets.NPM_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Install Vault CLI
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq gpg
+          wget -qO- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+          echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+          sudo apt-get update -qq && sudo apt-get install -y -qq vault
+
+      - name: Générer .env depuis Vault
+        env:
+          VAULT_ADDR: ${{ secrets.VAULT_ADDR }}
+          VAULT_ROLE_ID: ${{ secrets.VAULT_ROLE_ID }}
+          VAULT_SECRET_ID: ${{ secrets.VAULT_SECRET_ID }}
+          APP_NAME: ${{ inputs.app_name }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          TOKEN=$(vault write -field=token auth/approle/login \
+            role_id="$VAULT_ROLE_ID" \
+            secret_id="$VAULT_SECRET_ID")
+          export VAULT_TOKEN="$TOKEN"
+
+          echo "IMAGE_TAG=${IMAGE_TAG:0:7}" > .env
+
+          # Échec Vault = échec visible (le secret existe toujours : créé par
+          # provision-app). Les clés préfixées `_` sont des métadonnées, pas des
+          # variables d'env.
+          vault kv get -format=json "secret/apps/$APP_NAME" > /tmp/vault-secrets.json
+          jq -r '.data.data | to_entries[] | select(.key | startswith("_") | not) | "\(.key)=\(.value)"' /tmp/vault-secrets.json >> .env
+
+          # Paths Vault additionnels déclarés dans apps/<app>.yml (vault.paths),
+          # publiés par provision-app dans _vault_paths (la policy de l'app les
+          # couvre en lecture).
+          EXTRA_PATHS=$(jq -r '.data.data._vault_paths // "[]" | fromjson | .[]' /tmp/vault-secrets.json)
+          for P in $EXTRA_PATHS; do
+            vault kv get -format=json "$P" | \
+              jq -r '.data.data | to_entries[] | select(.key | startswith("_") | not) | "\(.key)=\(.value)"' >> .env
+          done
+
+          echo "=== .env généré (clés uniquement) ==="
+          cut -d= -f1 .env
+
+      - name: Copy .env to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: deploy
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: ".env"
+          target: /opt/infra/apps/${{ inputs.app_name }}/
+
+      - name: Deploy on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: deploy
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          envs: GHCR_TOKEN
+          script: |
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u voikyrioh --password-stdin
+            cd /opt/infra/apps/${{ inputs.app_name }}
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker compose ps
