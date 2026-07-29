@@ -1,0 +1,123 @@
+name: Discord Notify (Reusable)
+
+# Poste une notification Discord formatée directement au webhook depuis le
+# runner CI (aucun service intermédiaire). Le format de l'embed est défini ICI
+# et UNIQUEMENT ici : tous les repos appelants héritent du même rendu (DSC-01).
+#
+# Deux usages :
+#   type=release -> salon joueur (mises-à-jour), webhook DISCORD_WEBHOOK_PLAYER
+#   type=deploy  -> salon staff, webhook DISCORD_WEBHOOK_STAFF
+#
+# Robustesse (DSC-01 : jamais bloquant) : un secret webhook absent ou un échec
+# d'envoi Discord est journalisé et n'échoue PAS le pipeline appelant.
+
+on:
+  workflow_call:
+    inputs:
+      type:
+        description: "release | deploy"
+        required: true
+        type: string
+      version:
+        description: "Version concernée (ex: v1.4.0)"
+        required: true
+        type: string
+      changelog:
+        description: "Notes de version (optionnel, type=release)"
+        required: false
+        type: string
+        default: ""
+      service:
+        description: "Nom du service déployé (requis si type=deploy)"
+        required: false
+        type: string
+        default: ""
+      status:
+        description: "success | failure (requis si type=deploy)"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      DISCORD_WEBHOOK_PLAYER:
+        description: "Webhook du salon joueur (requis si type=release)"
+        required: false
+      DISCORD_WEBHOOK_STAFF:
+        description: "Webhook du salon staff (requis si type=deploy)"
+        required: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Construire et envoyer la notification Discord
+        continue-on-error: true   # DSC-01 : une notif ratée ne casse jamais le pipeline appelant
+        env:
+          TYPE: ${{ inputs.type }}
+          VERSION: ${{ inputs.version }}
+          CHANGELOG: ${{ inputs.changelog }}
+          SERVICE: ${{ inputs.service }}
+          STATUS: ${{ inputs.status }}
+          WEBHOOK_PLAYER: ${{ secrets.DISCORD_WEBHOOK_PLAYER }}
+          WEBHOOK_STAFF: ${{ secrets.DISCORD_WEBHOOK_STAFF }}
+        run: |
+          set -u
+
+          # Couleurs figées (RG-07) : succès 0x2ecc71, échec 0xe74c3c, release 0x5865f2
+          COLOR_SUCCESS=3066993
+          COLOR_FAILURE=15158332
+          COLOR_RELEASE=5793266
+
+          case "$TYPE" in
+            release)
+              WEBHOOK="$WEBHOOK_PLAYER"
+              TITLE="Mise à jour $VERSION"
+              if [ -n "$CHANGELOG" ]; then
+                DESC="$CHANGELOG"
+              else
+                DESC="Pas de notes fournies pour cette version."
+              fi
+              COLOR=$COLOR_RELEASE
+              ;;
+            deploy)
+              WEBHOOK="$WEBHOOK_STAFF"
+              TITLE="Déploiement $SERVICE $VERSION"
+              if [ "$STATUS" = "success" ]; then
+                DESC="Statut : succès"
+                COLOR=$COLOR_SUCCESS
+              else
+                DESC="Statut : échec"
+                COLOR=$COLOR_FAILURE
+              fi
+              ;;
+            *)
+              echo "::error::type invalide '$TYPE' (attendu: release | deploy). Notification non envoyée."
+              exit 0
+              ;;
+          esac
+
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning::Secret webhook Discord manquant pour type=$TYPE. Notification non envoyée, pipeline poursuit."
+            exit 0
+          fi
+
+          DATE_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          # jq construit le JSON en échappant proprement le changelog (peut
+          # contenir guillemets, retours ligne, etc.).
+          PAYLOAD="$(jq -n \
+            --arg title "$TITLE" \
+            --arg desc "$DESC" \
+            --argjson color "$COLOR" \
+            --arg footer "$DATE_ISO" \
+            '{embeds: [{title: $title, description: $desc, color: $color, footer: {text: $footer}}]}')"
+
+          HTTP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -X POST "$WEBHOOK" \
+            -d "$PAYLOAD" || echo "000")"
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "Notification Discord envoyée (type=$TYPE, HTTP $HTTP_CODE)."
+          else
+            echo "::warning::Échec d'envoi de la notification Discord (type=$TYPE, HTTP $HTTP_CODE). Journalisé, pipeline non interrompu."
+          fi
