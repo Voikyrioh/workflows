@@ -21,6 +21,7 @@ Automates semantic versioning, git tagging, Docker image build/push to GHCR, and
 |---|---|---|
 | `GHCR_TOKEN` | Yes | GitHub token for pushing to GHCR (read+write packages) |
 | `GITHUB_TOKEN` | Yes (implicit) | Provided by GitHub Actions; used for tagging and releases |
+| `NPM_TOKEN` | No | npm token for the GitHub registry; falls back to `GITHUB_TOKEN`. Passed to the build as buildx secret `github_token` (`RUN --mount=type=secret,id=github_token`) and as build-arg `GITHUB_TOKEN` (legacy) |
 
 ## Outputs
 

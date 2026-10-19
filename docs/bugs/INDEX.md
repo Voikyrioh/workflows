@@ -28,3 +28,4 @@ When a bug is discovered:
 [Link to PR or commit]
 ```
 
+- [01M5B3BHSRCSEPPADJJ3NV2BR0](01M5B3BHSRCSEPPADJJ3NV2BR0.md) — npm 401 : token passé seulement en build-arg, Dockerfile en secret buildx — 2026-10-20
