@@ -1,6 +1,8 @@
 # Known Issues & Bugs
 
-No known bugs at time of documentation (2026-09-14).
+## Bugs
+
+- [01M5B3BHSRCSEPPADJJ3NV2BR0](01M5B3BHSRCSEPPADJJ3NV2BR0.md) — npm 401 : token passé seulement en build-arg, Dockerfile en secret buildx — 2026-10-20
 
 ## Reporting & Tracking
 

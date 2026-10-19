@@ -80,6 +80,10 @@ jobs:
             ghcr.io/${{ steps.owner.outputs.value }}/${{ inputs.app_name }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # FIX:01M5B3BHSRCSEPPADJJ3NV2BR0 Token npm (registre GitHub) : en secret buildx pour les Dockerfiles qui font
+          # `RUN --mount=type=secret,id=github_token`, et en build-arg (historique) pour les autres.
+          secrets: |
+            github_token=${{ secrets.NPM_TOKEN || secrets.GITHUB_TOKEN }}
           build-args: |
             GITHUB_TOKEN=${{ secrets.NPM_TOKEN || secrets.GITHUB_TOKEN }}
             ${{ inputs.build_args }}
