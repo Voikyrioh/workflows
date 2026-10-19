@@ -14,4 +14,4 @@
 Les deux workflows passent aussi `secrets: github_token=...` à `docker/build-push-action`. Le secret buildx n'est ni dans l'historique de l'image ni dans le cache gha, contrairement au build-arg (conservé pour les Dockerfiles existants qui font `ARG GITHUB_TOKEN`). Aucun changement côté repos appelants.
 
 ## Suivi
-Migrer les Dockerfiles en `ARG GITHUB_TOKEN` vers le secret buildx, puis retirer le build-arg.
+Migrer les Dockerfiles en `ARG GITHUB_TOKEN` vers le secret buildx, puis retirer le build-arg. Concernés au 2026-10-20 : `lorecrafter/api`, `dofus/dofus-db-retro-api`, `hearth/hearth-releases-api` (+ tout repo appelant à recenser). Suivi : tâche T04 de `contexts/voikyrioh/sessions/2026-10-19-decouplage-identite-cv` (orga-global).

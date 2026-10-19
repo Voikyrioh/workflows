@@ -25,7 +25,7 @@ Builds and pushes a Docker image to GHCR, retrieves deployment configuration fro
 | `VAULT_ROLE_ID` | Yes | AppRole role ID |
 | `VAULT_SECRET_ID` | Yes | AppRole secret ID |
 | `GHCR_TOKEN` | Yes | GitHub token for pulling image from GHCR |
-| `NPM_TOKEN` | No | Optional; for private npm packages (backend only) |
+| `NPM_TOKEN` | No | npm token for the GitHub registry; falls back to `GITHUB_TOKEN`. Passed to the build as buildx secret `github_token` (`RUN --mount=type=secret,id=github_token`) and as build-arg `GITHUB_TOKEN` (legacy) |
 
 ## Workflow Steps
 

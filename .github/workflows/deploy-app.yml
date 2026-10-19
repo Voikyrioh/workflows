@@ -37,6 +37,9 @@ jobs:
       contents: read
       packages: write
 
+    env:
+      # FIX:01M5B3BHSRCSEPPADJJ3NV2BR0 npm token (GitHub registry), shared by build secret and build-arg
+      NPM_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -65,9 +68,9 @@ jobs:
           # FIX:01M5B3BHSRCSEPPADJJ3NV2BR0 Token npm (registre GitHub) : en secret buildx pour les Dockerfiles qui font
           # `RUN --mount=type=secret,id=github_token`, et en build-arg (historique) pour les autres.
           secrets: |
-            github_token=${{ secrets.NPM_TOKEN || secrets.GITHUB_TOKEN }}
+            github_token=${{ env.NPM_AUTH_TOKEN }}
           build-args: |
-            GITHUB_TOKEN=${{ secrets.NPM_TOKEN || secrets.GITHUB_TOKEN }}
+            GITHUB_TOKEN=${{ env.NPM_AUTH_TOKEN }}
 
       - name: Install Vault CLI
         run: |
